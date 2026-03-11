@@ -1,3 +1,4 @@
+const https = require("node:https");
 const {
   default: defaultMakeWASocket,
   makeWASocket: namedMakeWASocket,
@@ -17,6 +18,12 @@ const {
 } = require("./ui/terminal-dashboard");
 
 const makeWASocket = defaultMakeWASocket || namedMakeWASocket;
+const DEFAULT_WA_VERSION = [2, 3000, 1029030078];
+const WA_WEB_SW_URL = "https://web.whatsapp.com/sw.js";
+const CLIENT_REVISION_REGEX = /client_revision[^0-9]*(\d+)/i;
+const WA_VERSION_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let cachedWaVersionInfo = null;
 
 const dashboard =
   config.uiMode === "dashboard"
@@ -75,6 +82,96 @@ const isRecoverableDisconnect = (code) => {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const selectBrowserProfile = () => {
+  switch (process.platform) {
+    case "win32":
+      return Browsers.windows("Chrome");
+    case "darwin":
+      return Browsers.macOS("Chrome");
+    default:
+      return Browsers.ubuntu("Chrome");
+  }
+};
+
+const fetchText = (url, headers) =>
+  new Promise((resolve, reject) => {
+    const request = https.request(
+      url,
+      {
+        method: "GET",
+        headers
+      },
+      (response) => {
+        let body = "";
+
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          body += chunk;
+        });
+        response.on("end", () => {
+          if (response.statusCode !== 200) {
+            reject(
+              new Error(
+                `HTTP ${response.statusCode} ${response.statusMessage || ""}`.trim()
+              )
+            );
+            return;
+          }
+
+          resolve(body);
+        });
+      }
+    );
+
+    request.on("error", reject);
+    request.end();
+  });
+
+const fetchLatestWaVersionInfo = async () => {
+  const now = Date.now();
+  if (
+    cachedWaVersionInfo &&
+    now - cachedWaVersionInfo.fetchedAt < WA_VERSION_CACHE_TTL_MS
+  ) {
+    return cachedWaVersionInfo;
+  }
+
+  try {
+    const serviceWorker = await fetchText(WA_WEB_SW_URL, {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+      Accept: "*/*",
+      "Accept-Language": "en-US,en;q=0.9",
+      Referer: "https://web.whatsapp.com/",
+      "Sec-Fetch-Dest": "serviceworker",
+      "Sec-Fetch-Mode": "same-origin",
+      "Sec-Fetch-Site": "same-origin",
+      "Service-Worker": "script"
+    });
+    const match = serviceWorker.match(CLIENT_REVISION_REGEX);
+
+    if (!match?.[1]) {
+      throw new Error("client_revision not found in sw.js");
+    }
+
+    const version = [2, 3000, Number(match[1])];
+    cachedWaVersionInfo = {
+      version,
+      source: "live-sw.js",
+      fetchedAt: now
+    };
+    return cachedWaVersionInfo;
+  } catch (error) {
+    cachedWaVersionInfo = {
+      version: DEFAULT_WA_VERSION,
+      source: "fallback-default",
+      fetchedAt: now,
+      errorMessage: error?.message || "unknown error"
+    };
+    return cachedWaVersionInfo;
+  }
+};
+
 const startBot = async () => {
   await db.init();
 
@@ -118,11 +215,31 @@ const startBot = async () => {
 
   const connect = async () => {
     const { state, saveCreds } = await useMultiFileAuthState(config.authDir);
+    const browser = selectBrowserProfile();
+    const waVersionInfo = await fetchLatestWaVersionInfo();
+
+    if (waVersionInfo.source === "live-sw.js") {
+      logger.info({
+        event: "connection.profile",
+        browser,
+        version: waVersionInfo.version,
+        versionSource: waVersionInfo.source
+      }, "WA_PROFILE");
+    } else {
+      logger.warn({
+        event: "connection.profile_fallback",
+        browser,
+        version: waVersionInfo.version,
+        versionSource: waVersionInfo.source,
+        reason: waVersionInfo.errorMessage
+      }, "WA_PROFILE_FALLBACK");
+    }
 
     const sock = makeWASocket({
       auth: state,
       logger: baileysLogger,
-      browser: Browsers.ubuntu("Chrome"),
+      browser,
+      version: waVersionInfo.version,
       printQRInTerminal: config.printQRInTerminal
     });
 
