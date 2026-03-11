@@ -1,0 +1,10 @@
+node_modules/
+.env
+sessions/
+data/*.json
+data/*.bak
+data/*.tmp
+data/*.corrupt-*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

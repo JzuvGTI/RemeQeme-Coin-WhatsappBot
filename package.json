@@ -1,0 +1,27 @@
+{
+  "name": "byone-whatsapp-bot",
+  "version": "1.0.0",
+  "description": "Byone Whatsapp Bot with modular command map and safe JSON database",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "ui": "node src/index.js --ui",
+    "dev": "node --watch src/index.js",
+    "test": "node --test",
+    "postinstall": "node scripts/postinstall.cjs"
+  },
+  "keywords": [
+    "whatsapp-bot",
+    "baileys-pro",
+    "byone"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@hamxyztmvn/baileys-pro": "github:hamxyztmvn/baileys-pro",
+    "dotenv": "^16.6.1",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
